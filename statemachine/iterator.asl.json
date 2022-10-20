@@ -1,0 +1,71 @@
+
+{
+    "StartAt": "GetLogGroups",
+    "States": {
+        "GetLogGroups": {
+            "Next": "SetLGsSeen",
+            "Type": "Task",
+            "ResultPath": "$.LG",
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:describeLogGroups",
+            "Parameters": {}
+        },
+        "SetLGsSeen": {
+            "Type": "Pass",
+            "ResultPath": "$.Stats",
+            "Parameters": {
+                "LGsDeleted": 0,
+                "LGsRetained": 0,
+                "LGsSeen.$": "States.ArrayLength($.LG.LogGroups)"
+            },
+            "Next": "ExecuteRunner"
+        },
+        "ExecuteRunner": {
+            "Next": "HasNextToken?",
+            "Type": "Task",
+            "ResultPath": "$.Stats",
+            "Resource": "arn:aws:states:::states:startExecution.waitForTaskToken",
+            "Parameters": {
+                "Input": {
+                    "LogGroups.$": "$.LG.LogGroups",
+                    "Stats.$": "$.Stats",
+                    "Token.$": "$$.Task.Token"
+                },
+                "StateMachineArn": "${RunnerStateMachineArn}"
+            }
+        },
+        "AppendTotal": {
+            "Type": "Pass",
+            "ResultPath": "$.Stats",
+            "Parameters": {
+                "LGsDeleted.$": "$.Stats.LGsDeleted",
+                "LGsRetained.$": "$.Stats.LGsRetained",
+                "LGsSeen.$": "States.MathAdd($.Stats.LGsSeen, States.ArrayLength($.LG.LogGroups))"
+            },
+            "Next": "ExecuteRunner"
+        },
+        "GetNextLogGroups": {
+            "Next": "AppendTotal",
+            "Type": "Task",
+            "ResultPath": "$.LG",
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:describeLogGroups",
+            "Parameters": {
+                "NextToken.$": "$.LG.NextToken"
+            }
+        },
+        "HasNextToken?": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.LG.NextToken",
+                    "IsPresent": true,
+                    "Next": "GetNextLogGroups"
+                }
+            ],
+            "Default": "Work Complete!"
+        },
+        "Work Complete!": {
+            "Type": "Succeed",
+            "OutputPath": "$.Stats"
+        }
+    }
+}

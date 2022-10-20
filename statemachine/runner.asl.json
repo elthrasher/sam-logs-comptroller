@@ -1,0 +1,216 @@
+{
+    "StartAt": "Map",
+    "States": {
+        "Map": {
+            "Type": "Map",
+            "ResultPath": "$.MapResult",
+            "Next": "InitStatsLoop",
+            "InputPath": "$.LogGroups",
+            "Iterator": {
+                "StartAt": "GetLGParts",
+                "States": {
+                    "GetLGParts": {
+                        "Type": "Pass",
+                        "ResultPath": "$.Function",
+                        "Parameters": {
+                            "LGParts.$": "States.StringSplit($.LogGroupName, '/')"
+                        },
+                        "Next": "GetArrayLen"
+                    },
+                    "GetArrayLen": {
+                        "Type": "Pass",
+                        "ResultPath": "$.Array",
+                        "Parameters": {
+                            "Len.$": "States.ArrayLength($.Function.LGParts)"
+                        },
+                        "Next": "TwoOrMore?"
+                    },
+                    "TwoOrMore?": {
+                        "Type": "Choice",
+                        "Choices": [
+                            {
+                                "Variable": "$.Array.Len",
+                                "NumericGreaterThanEquals": 2,
+                                "Next": "GetLogType"
+                            }
+                        ],
+                        "Default": "HasRetention?"
+                    },
+                    "GetLogType": {
+                        "Type": "Pass",
+                        "ResultPath": "$.Log",
+                        "Parameters": {
+                            "LogType.$": "States.ArrayGetItem($.Function.LGParts, 1)"
+                        },
+                        "Next": "IsLambdaLog?"
+                    },
+                    "IsLambdaLog?": {
+                        "Type": "Choice",
+                        "Choices": [
+                            {
+                                "Variable": "$.Log.LogType",
+                                "StringEquals": "lambda",
+                                "Next": "GetFnName"
+                            }
+                        ],
+                        "Default": "HasRetention?"
+                    },
+                    "GetFnName": {
+                        "Type": "Pass",
+                        "ResultPath": "$.Function",
+                        "Parameters": {
+                            "FunctionName.$": "States.ArrayGetItem($.Function.LGParts, 2)"
+                        },
+                        "Next": "FunctionPresent?"
+                    },
+                    "FunctionPresent?": {
+                        "Type": "Choice",
+                        "Choices": [
+                            {
+                                "Variable": "$.Function.FunctionName",
+                                "IsNull": false,
+                                "Next": "GetFunction"
+                            }
+                        ],
+                        "Default": "HasRetention?"
+                    },
+                    "GetFunction": {
+                        "Next": "HasRetention?",
+                        "Catch": [
+                            {
+                                "ErrorEquals": [
+                                    "States.TaskFailed"
+                                ],
+                                "ResultPath": null,
+                                "Next": "DeleteLG"
+                            }
+                        ],
+                        "Type": "Task",
+                        "ResultPath": null,
+                        "Resource": "arn:aws:states:::aws-sdk:lambda:getFunction",
+                        "Parameters": {
+                            "FunctionName.$": "$.Function.FunctionName"
+                        }
+                    },
+                    "HasRetention?": {
+                        "Type": "Choice",
+                        "Choices": [
+                            {
+                                "Variable": "$.RetentionInDays",
+                                "IsPresent": false,
+                                "Next": "AddRetention"
+                            }
+                        ],
+                        "Default": "lgtm"
+                    },
+                    "lgtm": {
+                        "Type": "Pass",
+                        "Result": {
+                            "IsDeleted": 0,
+                            "IsRetained": 0
+                        },
+                        "End": true
+                    },
+                    "AddRetention": {
+                        "End": true,
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "MaxAttempts": 10
+                            }
+                        ],
+                        "Type": "Task",
+                        "ResultSelector": {
+                            "IsDeleted": 0,
+                            "IsRetained": 1
+                        },
+                        "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:putRetentionPolicy",
+                        "Parameters": {
+                            "LogGroupName.$": "$.LogGroupName",
+                            "RetentionInDays": ${RetentionInDays}
+                        }
+                    },
+                    "DeleteLG": {
+                        "End": true,
+                        "Retry": [
+                            {
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
+                                "MaxAttempts": 10
+                            }
+                        ],
+                        "Type": "Task",
+                        "ResultSelector": {
+                            "IsDeleted": 1,
+                            "IsRetained": 0
+                        },
+                        "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:deleteLogGroup",
+                        "Parameters": {
+                            "LogGroupName.$": "$.LogGroupName"
+                        }
+                    }
+                }
+            },
+            "MaxConcurrency": 10
+        },
+        "InitStatsLoop": {
+            "Type": "Pass",
+            "ResultPath": "$.Iterator",
+            "Parameters": {
+                "Index": 0,
+                "ResultLen.$": "States.ArrayLength($.MapResult)"
+            },
+            "Next": "HasNextMapResult?"
+        },
+        "HasNextMapResult?": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.Iterator.Index",
+                    "NumericLessThanPath": "$.Iterator.ResultLen",
+                    "Next": "GetNextResult"
+                }
+            ],
+            "Default": "SendSuccess"
+        },
+        "IncrementCounter": {
+            "Type": "Pass",
+            "ResultPath": "$.Iterator",
+            "Parameters": {
+                "Index.$": "States.MathAdd($.Iterator.Index, 1)",
+                "ResultLen.$": "$.Iterator.ResultLen"
+            },
+            "Next": "HasNextMapResult?"
+        },
+        "IncrementStats": {
+            "Type": "Pass",
+            "ResultPath": "$.Stats",
+            "Parameters": {
+                "LGsDeleted.$": "States.MathAdd($.Stats.LGsDeleted, $.R.Result.IsDeleted)",
+                "LGsRetained.$": "States.MathAdd($.Stats.LGsRetained, $.R.Result.IsRetained)",
+                "LGsSeen.$": "$.Stats.LGsSeen"
+            },
+            "Next": "IncrementCounter"
+        },
+        "GetNextResult": {
+            "Type": "Pass",
+            "ResultPath": "$.R",
+            "Parameters": {
+                "Result.$": "States.ArrayGetItem($.MapResult, $.Iterator.Index)"
+            },
+            "Next": "IncrementStats"
+        },
+        "SendSuccess": {
+            "End": true,
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:sfn:sendTaskSuccess",
+            "Parameters": {
+                "Output.$": "$.Stats",
+                "TaskToken.$": "$.Token"
+            }
+        }
+    }
+}
