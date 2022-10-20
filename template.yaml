@@ -15,6 +15,27 @@ Parameters:
     Type: String
     Default: "rate(7 days)"
 
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: sam-logs-comptroller
+    Description: Pure ASL State Machine to set log retention and prune unused LogGroups at any scale!
+    Author: Matt Morgan
+    SpdxLicenseId: Apache-2.0
+    LicenseUrl: LICENSE
+    ReadmeUrl: README.md
+    Labels: 
+      - cloudwatch
+      - intrinsic
+      - logs
+      - loggroups
+      - retention
+      - sam
+      - serverless
+      - stepfunctions
+    HomePageUrl: https://github.com/elthrasher/sam-logs-comptroller
+    SemanticVersion: 0.1.0
+    SourceCodeUrl: https://github.com/elthrasher/sam-logs-comptroller
+
 Resources:
   IteratorStateMachine:
     Type: AWS::Serverless::StateMachine
